@@ -15,7 +15,7 @@ import sys
 from datetime import datetime, timedelta
 from random import random
 from typing import List, NamedTuple, Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode, quote
 
 from streamlink.exceptions import NoStreamsError, PluginError
 from streamlink.plugin import Plugin, pluginargument, pluginmatcher
@@ -210,7 +210,7 @@ class UsherService:
         self.session = session
 
     def _create_url(self, endpoint, **extra_params):
-        url = f"https://usher.ttvnw.net{endpoint}"
+        url = f"https://api.ttv.lol{endpoint}"
         params = {
             "player": "twitchweb",
             "p": int(random() * 999999),
@@ -218,10 +218,18 @@ class UsherService:
             "allow_source": "true",
             "allow_audio_only": "true",
             "allow_spectre": "false",
+            "player_backend": "mediaplayer", #these are copied from browser request, probably not necessary
+            "playlist_include_framerate": "true",
+            "supported_codecs": "avc1",
+            "reassignments_supported": "true",
+            "cdm": "wv",
+            "player_version": "1.15.0",
+            "fast_bread": "true"
         }
         params.update(extra_params)
 
-        req = self.session.http.prepare_new_request(url=url, params=params)
+        url = quote(url + '?' + urlencode(params), safe='/:') #ttvlol API requires paramaters to be encoded
+        req = self.session.http.prepare_new_request(url=url)
 
         return req.url
 
@@ -241,7 +249,7 @@ class UsherService:
             log.debug(f"{extra_params_debug!r}")
         except PluginError:
             pass
-        return self._create_url(f"/api/channel/hls/{channel}.m3u8", **extra_params)
+        return self._create_url(f"/playlist/{channel}.m3u8", **extra_params)
 
     def video(self, video_id, **extra_params):
         return self._create_url(f"/vod/{video_id}", **extra_params)
@@ -255,7 +263,7 @@ class TwitchAPI:
         }
         self.headers.update(**dict(session.get_plugin_option("twitch", "api-header") or []))
         self.access_token_params = dict(session.get_plugin_option("twitch", "access-token-param") or [])
-        self.access_token_params.setdefault("playerType", "embed")
+        self.access_token_params.setdefault("playerType", "site") #ttvlol extension doesn't use embed
 
     def call(self, data, schema=None):
         res = self.session.http.post(
@@ -647,9 +655,10 @@ class Twitch(Plugin):
         self.session.http.headers.update({
             "referer": "https://player.twitch.tv",
             "origin": "https://player.twitch.tv",
+            "X-Donate-To": "https://ttv.lol/donate" #ttvlol API requires this header to be set
         })
         sig, token, restricted_bitrates = self._access_token(True, self.channel)
-        url = self.usher.channel(self.channel, sig=sig, token=token, fast_bread=True)
+        url = self.usher.channel(self.channel) #ttvlol extension strips sig and token, not sending those
 
         return self._get_hls_streams(url, restricted_bitrates)
 
